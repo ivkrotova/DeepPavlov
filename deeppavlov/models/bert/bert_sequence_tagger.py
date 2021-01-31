@@ -17,6 +17,7 @@ from typing import List, Union, Dict, Optional
 
 import numpy as np
 import tensorflow as tf
+import tensorflow_addons as tfa
 from bert_dp.modeling import BertConfig, BertModel
 from bert_dp.optimization import AdamWeightDecayOptimizer
 
@@ -169,7 +170,7 @@ class BertSequenceNetwork(LRScheduledTFModel):
         attention_probs_keep_prob: keep_prob for Bert self-attention layers
         hidden_keep_prob: keep_prob for Bert hidden layers
         encoder_layer_ids: list of averaged layers from Bert encoder (layer ids)
-            optimizer: name of tf.train.* optimizer or None for `AdamWeightDecayOptimizer`
+            optimizer: name of tf.compat.v1.train.* optimizer or None for `AdamWeightDecayOptimizer`
             weight_decay_rate: L2 weight decay for `AdamWeightDecayOptimizer`
         encoder_dropout: dropout probability of encoder output layer
         ema_decay: what exponential moving averaging to use for network parameters, value from 0.0 to 1.0.
@@ -233,26 +234,26 @@ class BertSequenceNetwork(LRScheduledTFModel):
         if hidden_keep_prob is not None:
             self.bert_config.hidden_dropout_prob = 1.0 - hidden_keep_prob
 
-        self.sess_config = tf.ConfigProto(allow_soft_placement=True)
+        self.sess_config = tf.compat.v1.ConfigProto(allow_soft_placement=True)
         self.sess_config.gpu_options.allow_growth = True
-        self.sess = tf.Session(config=self.sess_config)
+        self.sess = tf.compat.v1.Session(config=self.sess_config)
 
         self._init_graph()
 
         self._init_optimizer()
 
-        self.sess.run(tf.global_variables_initializer())
+        self.sess.run(tf.compat.v1.global_variables_initializer())
 
         if pretrained_bert is not None:
             pretrained_bert = str(expand_path(pretrained_bert))
 
-            if tf.train.checkpoint_exists(pretrained_bert) \
-                    and not (self.load_path and tf.train.checkpoint_exists(str(self.load_path.resolve()))):
+            if tf.compat.v1.train.checkpoint_exists(pretrained_bert) \
+                    and not (self.load_path and tf.compat.v1.train.checkpoint_exists(str(self.load_path.resolve()))):
                 log.info('[initializing model with Bert from {}]'.format(pretrained_bert))
                 # Exclude optimizer and classification variables from saved variables
                 var_list = self._get_saveable_variables(
                     exclude_scopes=('Optimizer', 'learning_rate', 'momentum', 'ner', 'EMA'))
-                saver = tf.train.Saver(var_list)
+                saver = tf.compat.v1.train.Saver(var_list)
                 saver.restore(self.sess, pretrained_bert)
 
         if self.load_path is not None:
@@ -271,20 +272,20 @@ class BertSequenceNetwork(LRScheduledTFModel):
                               token_type_ids=self.token_types_ph,
                               use_one_hot_embeddings=False)
 
-        with tf.variable_scope('ner'):
-            layer_weights = tf.get_variable('layer_weights_',
+        with tf.compat.v1.variable_scope('ner'):
+            layer_weights = tf.compat.v1.get_variable('layer_weights_',
                                             shape=len(self.encoder_layer_ids),
                                             initializer=tf.ones_initializer(),
                                             trainable=True)
             layer_mask = tf.ones_like(layer_weights)
-            layer_mask = tf.nn.dropout(layer_mask, self.encoder_keep_prob_ph)
-            layer_weights *= layer_mask
+            layer_mask = tf.compat.v1.nn.dropout(layer_mask, self.encoder_keep_prob_ph)
+            layer_weights = layer_weights * layer_mask
             # to prevent zero division
             mask_sum = tf.maximum(tf.reduce_sum(layer_mask), 1.0)
             layer_weights = tf.unstack(layer_weights / mask_sum)
             # TODO: may be stack and reduce_sum is faster
             units = sum(w * l for w, l in zip(layer_weights, self.encoder_layers()))
-            units = tf.nn.dropout(units, keep_prob=self.keep_prob_ph)
+            units = tf.compat.v1.nn.dropout(units, keep_prob=self.keep_prob_ph)
         return units
 
     def _get_tag_mask(self) -> tf.Tensor:
@@ -304,24 +305,24 @@ class BertSequenceNetwork(LRScheduledTFModel):
         return [self.bert.all_encoder_layers[i] for i in self.encoder_layer_ids]
 
     def _init_placeholders(self) -> None:
-        self.input_ids_ph = tf.placeholder(shape=(None, None),
+        self.input_ids_ph = tf.compat.v1.placeholder(shape=(None, None),
                                            dtype=tf.int32,
                                            name='token_indices_ph')
-        self.input_masks_ph = tf.placeholder(shape=(None, None),
+        self.input_masks_ph = tf.compat.v1.placeholder(shape=(None, None),
                                              dtype=tf.int32,
                                              name='token_mask_ph')
         self.token_types_ph = \
-            tf.placeholder_with_default(tf.zeros_like(self.input_ids_ph, dtype=tf.int32),
+            tf.compat.v1.placeholder_with_default(tf.zeros_like(self.input_ids_ph, dtype=tf.int32),
                                         shape=self.input_ids_ph.shape,
                                         name='token_types_ph')
-        self.learning_rate_ph = tf.placeholder_with_default(0.0, shape=[], name='learning_rate_ph')
-        self.keep_prob_ph = tf.placeholder_with_default(1.0, shape=[], name='keep_prob_ph')
-        self.encoder_keep_prob_ph = tf.placeholder_with_default(1.0, shape=[], name='encoder_keep_prob_ph')
-        self.is_train_ph = tf.placeholder_with_default(False, shape=[], name='is_train_ph')
+        self.learning_rate_ph = tf.compat.v1.placeholder_with_default(0.0, shape=[], name='learning_rate_ph')
+        self.keep_prob_ph = tf.compat.v1.placeholder_with_default(1.0, shape=[], name='keep_prob_ph')
+        self.encoder_keep_prob_ph = tf.compat.v1.placeholder_with_default(1.0, shape=[], name='encoder_keep_prob_ph')
+        self.is_train_ph = tf.compat.v1.placeholder_with_default(False, shape=[], name='is_train_ph')
 
     def _init_optimizer(self) -> None:
-        with tf.variable_scope('Optimizer'):
-            self.global_step = tf.get_variable('global_step',
+        with tf.compat.v1.variable_scope('Optimizer'):
+            self.global_step = tf.compat.v1.get_variable('global_step',
                                                shape=[],
                                                dtype=tf.int32,
                                                initializer=tf.constant_initializer(0),
@@ -348,7 +349,7 @@ class BertSequenceNetwork(LRScheduledTFModel):
                                               optimizer_scope_name='Optimizer')
 
         if self.optimizer is None:
-            with tf.variable_scope('Optimizer'):
+            with tf.compat.v1.variable_scope('Optimizer'):
                 new_global_step = self.global_step + 1
                 self.train_op = tf.group(self.train_op, [self.global_step.assign(new_global_step)])
 
@@ -533,7 +534,7 @@ class BertSequenceTagger(BertSequenceNetwork):
 
         units = super()._init_graph()
 
-        with tf.variable_scope('ner'):
+        with tf.compat.v1.variable_scope('ner'):
             if self.use_birnn:
                 units, _ = bi_rnn(units,
                                   self.birnn_hidden_size,
@@ -542,17 +543,17 @@ class BertSequenceTagger(BertSequenceNetwork):
                                   name='birnn')
                 units = tf.concat(units, -1)
             # TODO: maybe add one more layer?
-            logits = tf.layers.dense(units, units=self.n_tags, name="output_dense")
+            logits = tf.compat.v1.layers.dense(units, units=self.n_tags, name="output_dense")
 
             self.logits = token_from_subtoken(logits, self.y_masks_ph)
 
             # CRF
             if self.use_crf:
-                transition_params = tf.get_variable('Transition_Params',
+                transition_params = tf.compat.v1.get_variable('Transition_Params',
                                                     shape=[self.n_tags, self.n_tags],
                                                     initializer=tf.zeros_initializer())
                 log_likelihood, transition_params = \
-                    tf.contrib.crf.crf_log_likelihood(self.logits,
+                    tfa.text.crf_log_likelihood(self.logits,
                                                       self.y_ph,
                                                       self.seq_lengths,
                                                       transition_params)
@@ -562,7 +563,7 @@ class BertSequenceTagger(BertSequenceNetwork):
             self.y_predictions = tf.argmax(self.logits, -1)
             self.y_probas = tf.nn.softmax(self.logits, axis=2)
 
-        with tf.variable_scope("loss"):
+        with tf.compat.v1.variable_scope("loss"):
             tag_mask = self._get_tag_mask()
             y_mask = tf.cast(tag_mask, tf.float32)
             if self.use_crf:
@@ -574,8 +575,8 @@ class BertSequenceTagger(BertSequenceNetwork):
 
     def _init_placeholders(self) -> None:
         super()._init_placeholders()
-        self.y_ph = tf.placeholder(shape=(None, None), dtype=tf.int32, name='y_ph')
-        self.y_masks_ph = tf.placeholder(shape=(None, None),
+        self.y_ph = tf.compat.v1.placeholder(shape=(None, None), dtype=tf.int32, name='y_ph')
+        self.y_masks_ph = tf.compat.v1.placeholder(shape=(None, None),
                                          dtype=tf.int32,
                                          name='y_mask_ph')
 
@@ -634,7 +635,7 @@ class ExponentialMovingAverage:
                  decay: float = 0.999,
                  variables_on_cpu: bool = True) -> None:
         self.decay = decay
-        self.ema = tf.train.ExponentialMovingAverage(decay=decay)
+        self.ema = tf.compat.v1.train.ExponentialMovingAverage(decay=decay)
         self.var_device_name = '/cpu:0' if variables_on_cpu else None
         self.train_mode = None
 
@@ -642,7 +643,7 @@ class ExponentialMovingAverage:
               minimize_op: tf.Tensor,
               update_vars: List[tf.Variable] = None,
               name: str = "EMA") -> tf.Tensor:
-        with tf.variable_scope(name):
+        with tf.compat.v1.variable_scope(name):
             if update_vars is None:
                 update_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES)
 
@@ -651,23 +652,23 @@ class ExponentialMovingAverage:
 
             with tf.device(self.var_device_name):
                 # Make backup variables
-                with tf.variable_scope('BackupVariables'):
-                    backup_vars = [tf.get_variable(var.op.name,
+                with tf.compat.v1.variable_scope('BackupVariables'):
+                    backup_vars = [tf.compat.v1.get_variable(var.op.name,
                                                    dtype=var.value().dtype,
                                                    trainable=False,
                                                    initializer=var.initialized_value())
                                    for var in update_vars]
 
                 def ema_to_weights():
-                    return tf.group(*(tf.assign(var, self.ema.average(var).read_value())
+                    return tf.group(*(tf.compat.v1.assign(var, self.ema.average(var).read_value())
                                       for var in update_vars))
 
                 def save_weight_backups():
-                    return tf.group(*(tf.assign(bck, var.read_value())
+                    return tf.group(*(tf.compat.v1.assign(bck, var.read_value())
                                       for var, bck in zip(update_vars, backup_vars)))
 
                 def restore_weight_backups():
-                    return tf.group(*(tf.assign(var, bck.read_value())
+                    return tf.group(*(tf.compat.v1.assign(var, bck.read_value())
                                       for var, bck in zip(update_vars, backup_vars)))
 
                 train_switch_op = restore_weight_backups()
